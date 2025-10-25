@@ -2,33 +2,18 @@ from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse
 from src.chat_bot.core.chat_node import ChatNode
 import uuid
-import json
-import os
 
 app = FastAPI()
 bot = ChatNode()
 
-# File to store session histories
-HISTORY_FILE = "chat_history.json"
+# In-memory session histories (no file I/O)
+session_histories = {}
 
-# Load existing history from JSON file
-if os.path.exists(HISTORY_FILE):
-    with open(HISTORY_FILE, "r") as f:
-        session_histories = json.load(f)
-else:
-    session_histories = {}
-
-# Save history to file
-def save_history():
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(session_histories, f, indent=2)
-
-# Generate a unique session ID and set cookie
 def get_session_id(request: Request, response: Response):
     session_id = request.cookies.get("session_id")
     if not session_id:
         session_id = str(uuid.uuid4())
-        response.set_cookie(key="session_id", value=session_id, max_age=60*60*24*30)  # 30 days
+        response.set_cookie(key="session_id", value=session_id, max_age=60*60*24*30)
     return session_id
 
 def format_chat(messages):
@@ -81,18 +66,14 @@ BASE_HTML = """
             e.preventDefault();
             const message = messageInput.value;
             messageInput.value = '';
-
-            // Append user message immediately
             chatBox.innerHTML += `<div class="message user-message"><strong>You:</strong> ${message}</div>`;
             chatBox.scrollTop = chatBox.scrollHeight;
 
-            // Send to server
             const formData = new FormData();
             formData.append('message', message);
             const res = await fetch('/', {{ method: 'POST', body: formData }});
             const html = await res.text();
 
-            // Extract bot message from returned HTML
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
             const botMessages = doc.querySelectorAll('.bot-message');
@@ -119,26 +100,19 @@ def index(request: Request, response: Response):
     return BASE_HTML.format(chat_history=format_chat(messages))
 
 @app.post("/", response_class=HTMLResponse)
-def chat(request: Request, response: Response, message: str = Form(...)):
+def chat_endpoint(request: Request, response: Response, message: str = Form(...)):
     session_id = get_session_id(request, response)
     if session_id not in session_histories:
         session_histories[session_id] = []
 
-    # Add user message
     session_histories[session_id].append(("user", message))
-    # Get bot response
-    response_text = bot.chat(message)
-    session_histories[session_id].append(("bot", response_text))
-
-    # Save to file
-    save_history()
+    bot_response = bot.chat(message)
+    session_histories[session_id].append(("bot", bot_response))
 
     return BASE_HTML.format(chat_history=format_chat(session_histories[session_id]))
 
-# Optional: Clear chat endpoint
 @app.post("/clear")
 def clear_chat(request: Request, response: Response):
     session_id = get_session_id(request, response)
     session_histories[session_id] = []
-    save_history()
     return {"status": "cleared"}
