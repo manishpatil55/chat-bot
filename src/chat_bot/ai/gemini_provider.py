@@ -10,7 +10,7 @@ class GeminiProvider:
         self.model = genai.GenerativeModel(GEMINI_MODEL)
         logger.info(f"GeminiProvider initialized with model {GEMINI_MODEL}")
 
-    def generate_response(self, prompt):
+    def generate_response(self, prompt: str) -> str:
         try:
             response = self.model.generate_content(prompt)
             return response.text

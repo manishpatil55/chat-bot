@@ -1,175 +1,183 @@
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Form
+from fastapi.responses import HTMLResponse
 from src.chat_bot.core.chat_node import ChatNode
-import uuid, json, os
 
 app = FastAPI()
 bot = ChatNode()
+chat_history = []
 
-HISTORY_FILE = "chat_history.json"
-
-# Load or create session histories
-if os.path.exists(HISTORY_FILE):
-    with open(HISTORY_FILE, "r") as f:
-        session_histories = json.load(f)
-else:
-    session_histories = {}
-
-def save_history():
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(session_histories, f, indent=2)
-
-BASE_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-<title>🤖 Chat-Bot (Gemini)</title>
-<style>
-body {{
-    font-family: Arial, sans-serif;
-    background:#f0f2f5;
-    margin:0;
-    display:flex;
-    justify-content:center;
-}}
-.container {{
-    max-width:600px;
-    width:100%;
-    margin-top:50px;
-    background:#fff;
-    border-radius:12px;
-    box-shadow:0 8px 20px rgba(0,0,0,0.1);
-    display:flex;
-    flex-direction:column;
-    height:80vh;
-}}
-h2 {{
-    text-align:center;
-    margin:20px 0;
-    color:#333;
-}}
-.chat-box {{
-    flex:1;
-    padding:20px;
-    overflow-y:auto;
-    border-top:1px solid #ddd;
-    border-bottom:1px solid #ddd;
-}}
-.message {{
-    padding:12px;
-    border-radius:10px;
-    margin-bottom:15px;
-    max-width:80%;
-    word-wrap:break-word;
-}}
-.user-message {{
-    background:#d1e7ff;
-    align-self:flex-end;
-}}
-.bot-message {{
-    background:#f0f0f0;
-    align-self:flex-start;
-}}
-form {{
-    display:flex;
-    padding:10px 20px;
-}}
-input[name="message"] {{
-    flex:1;
-    padding:10px;
-    border:1px solid #ccc;
-    border-radius:6px;
-    font-size:16px;
-}}
-button {{
-    padding:10px 20px;
-    margin-left:10px;
-    border:none;
-    background:#4CAF50;
-    color:white;
-    border-radius:6px;
-    cursor:pointer;
-}}
-button:hover {{ background:#45a049; }}
-</style>
-</head>
-<body>
-<div class="container">
-<h2>🤖 Chat-Bot (Gemini)</h2>
-<div class="chat-box" id="chat-box"></div>
-<form id="chat-form">
-<input name="message" placeholder="Type your message..." required autofocus />
-<button type="submit">Send</button>
-</form>
-</div>
-
-<script>
-const chatBox = document.getElementById('chat-box');
-const chatForm = document.getElementById('chat-form');
-let sessionId = localStorage.getItem("session_id") || "";
-
-// Render messages
-function addMessage(role, text){{
-    const div = document.createElement('div');
-    div.className = 'message ' + (role==='user'?'user-message':'bot-message');
-    div.innerHTML = `<strong>${{role==='user'?'You':'Bot'}}:</strong> ${{text}}`;
-    chatBox.appendChild(div);
-    chatBox.scrollTop = chatBox.scrollHeight;
-}}
-
-// Load existing history
-async function loadHistory(){{
-    if(!sessionId) return;
-    const res = await fetch(`/get_history?session_id=${{sessionId}}`);
-    const data = await res.json();
-    data.history.forEach(([role,text]) => addMessage(role,text));
-}}
-
-chatForm.addEventListener('submit', async e => {{
-    e.preventDefault();
-    const message = chatForm.elements['message'].value.trim();
-    if(!message) return;
-    addMessage('user', message);
-    chatForm.elements['message'].value = '';
-
-    const formData = new FormData();
-    formData.append('message', message);
-    formData.append('session_id', sessionId);
-
-    const res = await fetch('/send_message', {{
-        method:'POST',
-        body: formData
-    }});
-    const data = await res.json();
-    addMessage('bot', data.response);
-    sessionId = data.session_id;
-    localStorage.setItem('session_id', sessionId);
-}});
-
-loadHistory();
-</script>
-</body>
-</html>
-"""
+CLEAR_COMMANDS = ["clear", "clear chat", "clear this chat", "reset"]
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return BASE_HTML
+    messages_html = ""
+    for sender, msg in chat_history:
+        if sender == "You":
+            messages_html += f'<div class="user-msg fade-in"><span>{msg}</span></div>'
+        else:
+            messages_html += f'<div class="bot-msg fade-in"><span>{msg}</span></div>'
 
-@app.get("/get_history")
-async def get_history(session_id: str):
-    if not session_id or session_id not in session_histories:
-        return {"history": []}
-    return {"history": session_histories[session_id]}
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Chat Bot</title>
+        <style>
+            body {{
+                margin: 0;
+                height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                color: #fff;
+                background-color: white;
+            }}
+            @media (prefers-color-scheme: dark) {{
+                body {{
+                    background-color: #121212;
+                    background: radial-gradient(120% 120% at top right, #0d0d0d, #1a1a1a);
+                }}
+            }}
 
-@app.post("/send_message")
-async def send_message(message: str = Form(...), session_id: str = Form(None)):
-    if not session_id:
-        session_id = str(uuid.uuid4())
-    if session_id not in session_histories:
-        session_histories[session_id] = []
-    session_histories[session_id].append(("user", message))
-    response_text = bot.chat(message)
-    session_histories[session_id].append(("bot", response_text))
-    save_history()
-    return {"response": response_text, "session_id": session_id}
+            .glass-container {{
+                width: 95%;
+                max-width: 550px;
+                height: 80vh;
+                background: rgba(255, 255, 255, 0.06);
+                backdrop-filter: blur(40px) saturate(180%);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 28px;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+            }}
+
+            .chat-header {{
+                padding: 1.5em;
+                text-align: center;
+                font-weight: 600;
+                font-size: 1.8rem;
+            }}
+
+            .chat-box {{
+                flex: 1;
+                padding: 1.2em;
+                overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }}
+
+            .bot-msg, .user-msg {{
+                max-width: 80%;
+                padding: 0.9em 1.1em;
+                border-radius: 16px;
+                font-size: 0.95rem;
+                line-height: 1.5;
+                animation: fadeIn 0.4s ease;
+            }}
+
+            .bot-msg {{
+                align-self: flex-start;
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+            }}
+
+            .user-msg {{
+                align-self: flex-end;
+                background: linear-gradient(145deg, #007aff, #005de0);
+                box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+            }}
+
+            .input-area {{
+                display: flex;
+                align-items: center;
+                padding: 0.9em;
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+                background: rgba(255, 255, 255, 0.03);
+            }}
+
+            .input-area input {{
+                flex: 1;
+                padding: 0.8em 1em;
+                border-radius: 12px;
+                border: none;
+                background: rgba(255, 255, 255, 0.1);
+                color: #fff;
+                font-size: 0.95rem;
+                outline: none;
+                transition: background 0.2s ease, box-shadow 0.2s ease;
+            }}
+
+            .input-area input:focus {{
+                background: rgba(255, 255, 255, 0.15);
+                box-shadow: 0 0 10px rgba(0, 122, 255, 0.3);
+            }}
+
+            .input-area button {{
+                margin-left: 0.6em;
+                background: linear-gradient(145deg, #007aff, #005de0);
+                border: none;
+                color: white;
+                font-size: 1.2rem;
+                padding: 0.6em 1em;
+                border-radius: 12px;
+                cursor: pointer;
+                transition: 0.25s;
+            }}
+
+            .input-area button:hover {{
+                background: linear-gradient(145deg, #338fff, #007aff);
+                transform: scale(1.05);
+            }}
+
+            .fade-in {{
+                animation: fadeIn 0.4s ease;
+            }}
+
+            @keyframes fadeIn {{
+                from {{ opacity: 0; transform: translateY(5px); }}
+                to {{ opacity: 1; transform: translateY(0); }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="glass-container">
+            <div class="chat-header">Chatbot</div>
+            <div class="chat-box" id="chat-box">
+                {messages_html if messages_html else '<div class="bot-msg fade-in">👋 Hey! I’m Gemini. Ask me anything.</div>'}
+            </div>
+            <form class="input-area" action="/" method="post" id="chat-form">
+                <input name="message" id="message" placeholder="Type your message..." autocomplete="off" required />
+                <button type="submit" title="Send">➤</button>
+            </form>
+        </div>
+        <script>
+            const chatBox = document.getElementById('chat-box');
+            chatBox.scrollTop = chatBox.scrollHeight;
+            document.getElementById('chat-form').addEventListener('submit', () => {{
+                setTimeout(() => {{ chatBox.scrollTop = chatBox.scrollHeight; }}, 50);
+            }});
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/", response_class=HTMLResponse)
+def chat(message: str = Form(...)):
+    message_clean = message.strip().lower()
+    if message_clean in CLEAR_COMMANDS:
+        chat_history.clear()
+        chat_history.append(("Gemini", "🧹 All cleared! Ready for a fresh chat."))
+        return index()
+
+    chat_history.append(("You", message))
+    response = bot.chat(message)
+    chat_history.append(("Gemini", response))
+    return index()
