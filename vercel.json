@@ -1,9 +1,10 @@
 {
   "version": 2,
   "builds": [
-    { "src": "web_app.py", "use": "@vercel/python" }
+    { "src": "api/chat.py", "use": "@vercel/python" }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "web_app.py" }
+    { "src": "/api/(.*)", "dest": "api/chat.py" },
+    { "src": "/(.*)", "dest": "/public/index.html" }
   ]
 }
